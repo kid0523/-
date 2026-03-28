@@ -1,16 +1,27 @@
 import yfinance as yf
 import pandas as pd
 import datetime
+import requests
+
+# 建立帶有偽裝瀏覽器 Header 的 Session 以繞過免費雲端主機的 Rate Limit
+session = requests.Session()
+session.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+})
 
 def fetch_taiex_daily():
     """
     Fetch TAIEX index (^TWII) to check 5MA and daily change.
     """
-    taiex = yf.download("^TWII", period="1mo", interval="1d", auto_adjust=True, progress=False)
-    if taiex.empty or len(taiex) < 5:
+    try:
+        taiex = yf.download("^TWII", period="1mo", interval="1d", auto_adjust=True, progress=False, session=session)
+        if taiex.empty or len(taiex) < 5:
+            return None
+        return taiex
+    except Exception as e:
+        print("TaiEx fetch error:", e)
         return None
-        
-    return taiex
 
 def get_market_status(taiex_df: pd.DataFrame) -> dict:
     """
@@ -59,5 +70,9 @@ def fetch_stock_history(tickers: list, days: int=30):
     Fetch recent daily data to calculate 20-day historically 
     like Momentum, 5MA, Volume, Reversal.
     """
-    data = yf.download(tickers, period="2mo", interval="1d", group_by="ticker", auto_adjust=True, progress=False)
-    return data
+    try:
+        data = yf.download(tickers, period="2mo", interval="1d", group_by="ticker", auto_adjust=True, progress=False, session=session)
+        return data
+    except Exception as e:
+        print("Fetch history error:", e)
+        return pd.DataFrame()
