@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+pandas
+yfinance
+requests
+beautifulsoup4
+apscheduler
