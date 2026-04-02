@@ -34,7 +34,7 @@ def job_scan_market():
     c.execute('''
         INSERT OR REPLACE INTO market_status (date, status, taiex_close, up_count, down_count)
         VALUES (?, ?, ?, ?, ?)
-    ''', (today, market_info.get('status', 'NEUTRAL'), market_info.get('taiex_close', 0.0), 0, 0)) # simplified up/down count
+    ''', (today, market_info.get('status', 'UNKNOWN'), market_info.get('taiex_close', 0.0), 0, 0)) # simplified up/down count
     conn.commit()
     
     # If Market is WEAK, return immediately, no stocks recommended
@@ -105,7 +105,7 @@ def api_market_status():
     conn.close()
     if row:
         return dict(row)
-    return {"status": "NEUTRAL", "message": "Market not scanned yet"}
+    return {"status": "UNKNOWN", "message": "Market not scanned yet"}
 
 @app.get("/api/recommendations")
 def api_recommendations():

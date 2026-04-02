@@ -28,7 +28,7 @@ def get_market_status(taiex_df: pd.DataFrame) -> dict:
     Determine Market Status: STRONG / WEAK / NEUTRAL
     """
     if taiex_df is None or taiex_df.empty:
-        return {"status": "NEUTRAL", "reason": "No data"}
+        return {"status": "UNKNOWN", "reason": "No data"}
         
     # extract Close correctly. If multi-index, we access the 'Close' 
     # For a single ticker, it's a simple column 'Close' or multi-index depending on yfinance version.
@@ -38,7 +38,7 @@ def get_market_status(taiex_df: pd.DataFrame) -> dict:
         
     recent = close_series.tail(5)
     if len(recent) < 5:
-        return {"status": "NEUTRAL", "reason": "Insufficient data"}
+        return {"status": "UNKNOWN", "reason": "Insufficient data"}
         
     current_close = float(recent.iloc[-1])
     prev_close = float(recent.iloc[-2])
@@ -55,7 +55,7 @@ def get_market_status(taiex_df: pd.DataFrame) -> dict:
     elif not is_above_ma5 and pct_change < 0:
         status = "WEAK"
     else:
-        status = "NEUTRAL"
+        status = "VOLATILE"
         
     return {
         "status": status,
