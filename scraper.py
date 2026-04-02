@@ -89,3 +89,30 @@ def fetch_stock_history(tickers: list, days: int=40):
             results[ticker] = df
     
     return results
+
+def fetch_realtime_twse(stock_id: str) -> dict:
+    """
+    Fetch real-time price and volume from TWSE (handles both TSE and OTC stocks via combined query).
+    """
+    url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_{stock_id}.tw|otc_{stock_id}.tw"
+    try:
+        r = requests.get(url, timeout=5)
+        data = r.json()
+        for item in data.get("msgArray", []):
+            if item.get("c") == str(stock_id):
+                current_price = item.get("z")
+                if current_price == '-':
+                    current_price = item.get("b", "_").split("_")[0]
+                    if not current_price or current_price == '-':
+                        current_price = item.get("y")
+                
+                return {
+                    "price": float(current_price),
+                    "volume": float(item.get("v", 0)) * 1000, # TWSE 'v' is in lots (1000 shares)
+                    "open": float(item.get("o", current_price)) if item.get("o") != '-' else float(current_price),
+                    "high": float(item.get("h", current_price)) if item.get("h") != '-' else float(current_price),
+                    "low": float(item.get("l", current_price)) if item.get("l") != '-' else float(current_price)
+                }
+    except Exception as e:
+        print(f"TWSE Realtime fetch error for {stock_id}:", e)
+    return None

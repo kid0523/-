@@ -16,7 +16,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def health_check():
     return {"status": "ok"}
 
@@ -122,14 +122,33 @@ def api_recommendations():
     conn.close()
     return rows
 
-@app.get("/api/evaluate/{stock_id}")
+@app.api_route("/api/evaluate/{stock_id}", methods=["GET"])
 def api_evaluate_stock(stock_id: str):
     """
     On-Demand stock evaluator. Fetches 40 days history and returns the report card.
     """
-    df = fetch_finmind_data(stock_id.replace('.TW', ''), days=40)
+    import pandas as pd
+    from scraper import fetch_realtime_twse
+    
+    stock_code = stock_id.replace('.TW', '')
+    df = fetch_finmind_data(stock_code, days=40)
     if df is None or df.empty:
         return {"error": "無法取得該股票的歷史資料", "candidate": False}
+        
+    # Inject Real-time Data
+    rt_data = fetch_realtime_twse(stock_code)
+    if rt_data:
+        # FinMind usually fetches up to yesterday closing, or today closing if market closed.
+        # We enforce injecting the realtime price as "today"
+        today_ts = pd.Timestamp(datetime.date.today())
+        
+        df.loc[today_ts] = {
+            'Close': rt_data['price'],
+            'Volume': rt_data['volume'],
+            'Open': rt_data['open'],
+            'High': rt_data['high'],
+            'Low': rt_data['low']
+        }
         
     res = evaluate_stock(df)
     res['stock_id'] = stock_id
