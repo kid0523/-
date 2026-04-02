@@ -48,10 +48,36 @@ def init_db():
             date TEXT PRIMARY KEY,
             status TEXT,
             taiex_close REAL,
-            up_count INTEGER,
-            down_count INTEGER
+            recommendation_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            checklist_json TEXT DEFAULT '{}'
         )
     ''')
+    
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS scan_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        last_index INTEGER DEFAULT 0
+    )
+    ''')
+    
+    # Initialize the single row for state if it doesn't exist
+    c.execute('INSERT OR IGNORE INTO scan_state (id, last_index) VALUES (1, 0)')
+    
+    conn.commit()
+    conn.close()
+
+def get_scan_index():
+    conn = get_db()
+    c = conn.cursor()
+    c.execute('SELECT last_index FROM scan_state WHERE id = 1')
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else 0
+
+def update_scan_index(idx: int):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute('UPDATE scan_state SET last_index = ? WHERE id = 1', (idx,))
     conn.commit()
     conn.close()
 

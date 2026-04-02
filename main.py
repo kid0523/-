@@ -3,8 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 from scraper import fetch_taiex_daily, get_market_status, fetch_stock_history, fetch_finmind_data
 from strategy import evaluate_stock
-from database import init_db, get_db
+from database import init_db, get_db, get_scan_index, update_scan_index
 import datetime
+import json
+import sqlite3
 
 app = FastAPI()
 
@@ -23,74 +25,70 @@ def health_check():
 
 scheduler = BackgroundScheduler()
 
-# Demo stock list representing the market (since full market is too large to fetch without a premium API)
-MARKET_STOCKS = ['2330.TW', '2317.TW', '2454.TW', '3231.TW', '2382.TW'] 
-
-def job_scan_market():
-    # 1. Fetch TAIEX & evaluate Market Status
-    taiex_data = fetch_taiex_daily()
-    market_info = get_market_status(taiex_data)
-    
-    today = datetime.date.today().isoformat()
-    
-    # Save Market Status
+def clear_old_recommendations():
+    """Clear yesterday's recommendations at 15:00 every day."""
     conn = get_db()
     c = conn.cursor()
-    c.execute('''
-        INSERT OR REPLACE INTO market_status (date, status, taiex_close, up_count, down_count)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (today, market_info.get('status', 'UNKNOWN'), market_info.get('taiex_close', 0.0), 0, 0)) # simplified up/down count
-    conn.commit()
-    
-    # If Market is WEAK, return immediately, no stocks recommended
-    if market_info['status'] == 'WEAK':
-        conn.close()
-        return
-        
-    # 2. Fetch stocks
-    df_all = fetch_stock_history(MARKET_STOCKS, days=40)
-    if not df_all:
-        conn.close()
-        return
-        
-    results = []
-    for ticker in MARKET_STOCKS:
-        try:
-            df_ticker = df_all.get(ticker)
-            
-            if df_ticker is None:
-                continue
-                
-            df_ticker.dropna(inplace=True)
-            if df_ticker.empty:
-               continue
-               
-            eval_res = evaluate_stock(df_ticker)
-            if eval_res['candidate']:
-                eval_res['stock_id'] = ticker
-                results.append(eval_res)
-        except Exception as e:
-            print(f"Error evaluating {ticker}: {e}")
-            
-    # Sort by probability and keep top 10
-    results = sorted(results, key=lambda x: x['probability'], reverse=True)[:10]
-    
-    # Save to db
-    for res in results:
-        c.execute('''
-            INSERT INTO daily_recommendations 
-            (date, stock_id, score, win_rate, expected_min, expected_max, recommended_tp, sl_price)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (today, res['stock_id'], res['score'], res['probability'], res['expected_min'], res['expected_max'], res['tp'], res['sl_price']))
-    
+    c.execute('DELETE FROM daily_recommendations')
     conn.commit()
     conn.close()
+    print(f"[{datetime.datetime.now()}] 舊的有價證券推薦清單已清空。")
+
+def job_scan_market():
+    """
+    Midnight Rolling Scanner: 
+    Every 15 minutes, fetch next 50 stocks from tickers.json.
+    """
+    try:
+        with open('tickers.json', 'r') as f:
+            tickers = json.load(f)
+    except Exception as e:
+        print("無法讀取 tickers.json：", e)
+        return
+        
+    total_tickers = len(tickers)
+    if total_tickers == 0: return
+    
+    current_idx = get_scan_index()
+    end_idx = current_idx + 50
+    batch = tickers[current_idx:end_idx]
+    
+    print(f"[{datetime.datetime.now()}] Rolling Scan Started: {current_idx} to {end_idx-1} (Total: {total_tickers})")
+    
+    for ticker in batch:
+        df = fetch_finmind_data(ticker, days=40)
+        if df is not None and not df.empty:
+            res = evaluate_stock(df)
+            if res.get('candidate'):
+                conn = get_db()
+                c = conn.cursor()
+                today = datetime.date.today().isoformat()
+                c.execute('''
+                    INSERT INTO daily_recommendations (date, stock_id, score, win_rate, expected_max, recommended_tp, sl_price)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    today,
+                    ticker,
+                    res.get('score', 0),
+                    res['probability'],
+                    res['expected_max'],
+                    res['tp'],
+                    res['sl_price']
+                ))
+                conn.commit()
+                conn.close()
+                print(f"[!] 發現強烈推薦潛力股：{ticker}")
+
+    new_idx = end_idx % total_tickers
+    update_scan_index(new_idx)
+    print(f"[{datetime.datetime.now()}] Batch Scan Completed. Next start index: {new_idx}")
 
 @app.on_event("startup")
 def startup_event():
     init_db()
     # Schedule job every 5 mins between 9:00 - 13:30 (simulated)
-    scheduler.add_job(job_scan_market, 'interval', minutes=5)
+    scheduler.add_job(job_scan_market, 'interval', minutes=15)
+    scheduler.add_job(clear_old_recommendations, 'cron', hour=15, minute=0)
     scheduler.start()
     
     # Run once manually on startup for testing so we have data
@@ -114,10 +112,11 @@ def api_market_status():
 
 @app.get("/api/recommendations")
 def api_recommendations():
-    today = datetime.date.today().isoformat()
+    # Because we do midnight scanning, "today's" recommendations might be generated yesterday night 
+    # or today morning. Since we DELETE at 15:00, we can just return ALL rows currently in the tabel!
     conn = get_db()
     c = conn.cursor()
-    c.execute('SELECT * FROM daily_recommendations WHERE date = ? ORDER BY win_rate DESC LIMIT 10', (today,))
+    c.execute('SELECT * FROM daily_recommendations ORDER BY win_rate DESC LIMIT 30')
     rows = [dict(row) for row in c.fetchall()]
     conn.close()
     return rows
