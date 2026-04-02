@@ -39,11 +39,20 @@ def evaluate_stock(df: pd.DataFrame) -> dict:
     today_change = (current_close - prev_close) / prev_close
     gained_2pct = today_change > 0.02
     
+    # Checklist
+    checklist = {
+        "has_dropped_10": bool(has_dropped_10),
+        "no_new_low": bool(no_new_low),
+        "vol_surge": bool(vol_surge),
+        "above_5ma": bool(above_5ma),
+        "gained_2pct": bool(gained_2pct)
+    }
+
     # Phase 1: Candidate Pool Filter
     is_candidate = has_dropped_10 and no_new_low and vol_surge and above_5ma and gained_2pct
     
     if not is_candidate:
-        return {"candidate": False, "reason": "Filter conditions not met"}
+        return {"candidate": False, "reason": "未滿足球員初選條件（詳見檢核表）", "checklist": checklist, "current_price": current_close}
         
     # Phase 2: Scoring
     score = 0
@@ -96,5 +105,6 @@ def evaluate_stock(df: pd.DataFrame) -> dict:
         "expected_max": exp_max,
         "tp": tp,
         "current_price": current_close,
-        "sl_price": current_close * 0.98 # -2% fixed stop loss
+        "sl_price": current_close * 0.98, # -2% fixed stop loss
+        "checklist": checklist
     }

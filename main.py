@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
-from scraper import fetch_taiex_daily, get_market_status, fetch_stock_history
+from scraper import fetch_taiex_daily, get_market_status, fetch_stock_history, fetch_finmind_data
 from strategy import evaluate_stock
 from database import init_db, get_db
 import datetime
@@ -121,3 +121,16 @@ def api_recommendations():
     rows = [dict(row) for row in c.fetchall()]
     conn.close()
     return rows
+
+@app.get("/api/evaluate/{stock_id}")
+def api_evaluate_stock(stock_id: str):
+    """
+    On-Demand stock evaluator. Fetches 40 days history and returns the report card.
+    """
+    df = fetch_finmind_data(stock_id.replace('.TW', ''), days=40)
+    if df is None or df.empty:
+        return {"error": "無法取得該股票的歷史資料", "candidate": False}
+        
+    res = evaluate_stock(df)
+    res['stock_id'] = stock_id
+    return res
