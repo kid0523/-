@@ -52,7 +52,7 @@ def job_scan_market():
     for ticker in MARKET_STOCKS:
         try:
             if len(MARKET_STOCKS) > 1:
-                df_ticker = df_all.xs(ticker, level=1, axis=1)
+                df_ticker = df_all.xs(ticker, level=0, axis=1)
             else:
                 df_ticker = df_all
                 
