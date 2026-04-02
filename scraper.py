@@ -1,30 +1,49 @@
-import yfinance as yf
+import requests
 import pandas as pd
 import datetime
 
+def fetch_finmind_data(stock_id: str, days: int = 40) -> pd.DataFrame:
+    """
+    Helper function to access FinMind API for TaiwanStockPrice.
+    """
+    try:
+        start_date = (datetime.date.today() - datetime.timedelta(days=days)).strftime("%Y-%m-%d")
+        url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id={stock_id}&start_date={start_date}"
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        if data.get('status') == 200 and data.get('data'):
+            df = pd.DataFrame(data['data'])
+            # 轉換為大寫首字母以符合原本 yfinance 的相容格式
+            df.rename(columns={
+                'close': 'Close', 
+                'max': 'High', 
+                'min': 'Low', 
+                'Trading_Volume': 'Volume', 
+                'open': 'Open', 
+                'date': 'Date'
+            }, inplace=True)
+            df['Date'] = pd.to_datetime(df['Date'])
+            df.set_index('Date', inplace=True)
+            return df
+        return None
+    except Exception as e:
+        print(f"FinMind fetch error for {stock_id}:", e)
+        return None
 
 def fetch_taiex_daily():
     """
-    Fetch 0050.TW as a proxy for TAIEX to bypass Yahoo index rate limit.
+    Fetch 0050.TW as a proxy for TAIEX to bypass Yahoo index rate limit,
+    now using FinMind open API.
     """
-    try:
-        taiex = yf.download("0050.TW", period="1mo", interval="1d", auto_adjust=True, progress=False)
-        if taiex.empty or len(taiex) < 5:
-            return None
-        return taiex
-    except Exception as e:
-        print("TaiEx fetch error:", e)
-        return None
+    return fetch_finmind_data("0050", days=20)
 
 def get_market_status(taiex_df: pd.DataFrame) -> dict:
     """
-    Determine Market Status: STRONG / WEAK / NEUTRAL
+    Determine Market Status: STRONG / WEAK / VOLATILE
     """
     if taiex_df is None or taiex_df.empty:
         return {"status": "UNKNOWN", "reason": "No data"}
         
-    # extract Close correctly. If multi-index, we access the 'Close' 
-    # For a single ticker, it's a simple column 'Close' or multi-index depending on yfinance version.
     close_series = taiex_df['Close']
     if len(close_series.shape) > 1:
         close_series = close_series.iloc[:, 0]
@@ -42,7 +61,6 @@ def get_market_status(taiex_df: pd.DataFrame) -> dict:
     # rule: 站上5MA, 漲跌幅等
     is_above_ma5 = current_close > ma5
     
-    # 簡易判斷：若漲>0% 且 站上5MA 考慮強勢；跌<0 且 跌破5MA 弱勢
     if is_above_ma5 and pct_change > 0:
         status = "STRONG"
     elif not is_above_ma5 and pct_change < 0:
@@ -58,14 +76,16 @@ def get_market_status(taiex_df: pd.DataFrame) -> dict:
         "is_above_ma5": is_above_ma5
     }
 
-def fetch_stock_history(tickers: list, days: int=30):
+def fetch_stock_history(tickers: list, days: int=40):
     """
-    Fetch recent daily data to calculate 20-day historically 
-    like Momentum, 5MA, Volume, Reversal.
+    Fetch recent daily data to calculate 20-day heuristics.
+    Instead of yfinance MultiIndex, this returns a dictionary mapping ticker to DataFrame.
     """
-    try:
-        data = yf.download(tickers, period="2mo", interval="1d", group_by="ticker", auto_adjust=True, progress=False)
-        return data
-    except Exception as e:
-        print("Fetch history error:", e)
-        return pd.DataFrame()
+    results = {}
+    for ticker in tickers:
+        stock_id = ticker.replace('.TW', '')
+        df = fetch_finmind_data(stock_id, days=days)
+        if df is not None and not df.empty:
+            results[ticker] = df
+    
+    return results

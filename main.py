@@ -43,18 +43,18 @@ def job_scan_market():
         return
         
     # 2. Fetch stocks
-    df_all = fetch_stock_history(MARKET_STOCKS, days=30)
-    if df_all is None or df_all.empty:
+    df_all = fetch_stock_history(MARKET_STOCKS, days=40)
+    if not df_all:
         conn.close()
         return
         
     results = []
     for ticker in MARKET_STOCKS:
         try:
-            if len(MARKET_STOCKS) > 1:
-                df_ticker = df_all.xs(ticker, level=0, axis=1)
-            else:
-                df_ticker = df_all
+            df_ticker = df_all.get(ticker)
+            
+            if df_ticker is None:
+                continue
                 
             df_ticker.dropna(inplace=True)
             if df_ticker.empty:
