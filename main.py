@@ -16,6 +16,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
+def health_check():
+    return {"status": "ok"}
+
+
 scheduler = BackgroundScheduler()
 
 # Demo stock list representing the market (since full market is too large to fetch without a premium API)
