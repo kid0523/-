@@ -5,10 +5,10 @@ import datetime
 
 def fetch_taiex_daily():
     """
-    Fetch TAIEX index (^TWII) to check 5MA and daily change.
+    Fetch 0050.TW as a proxy for TAIEX to bypass Yahoo index rate limit.
     """
     try:
-        taiex = yf.download("^TWII", period="1mo", interval="1d", auto_adjust=True, progress=False)
+        taiex = yf.download("0050.TW", period="1mo", interval="1d", auto_adjust=True, progress=False)
         if taiex.empty or len(taiex) < 5:
             return None
         return taiex
