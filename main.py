@@ -124,7 +124,7 @@ def api_recommendations():
     # or today morning. Since we DELETE at 15:00, we can just return ALL rows currently in the tabel!
     conn = get_db()
     c = conn.cursor()
-    c.execute('SELECT * FROM daily_recommendations ORDER BY win_rate DESC LIMIT 30')
+    c.execute('SELECT * FROM daily_recommendations ORDER BY score DESC, expected_max DESC LIMIT 10')
     rows = [dict(row) for row in c.fetchall()]
     conn.close()
     return rows
