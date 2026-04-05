@@ -15,6 +15,9 @@ def evaluate_stock(df: pd.DataFrame) -> dict:
     current_close = float(recent_20['Close'].iloc[-1])
     prev_close = float(recent_20['Close'].iloc[-2])
     
+    if prev_close == 0:
+        return {"candidate": False, "reason": "Data error: prev_close is 0"}
+    
     # Condition 1: 近20天曾下跌10%
     max_20 = float(recent_20['High'].max())
     min_20 = float(recent_20['Low'].min())

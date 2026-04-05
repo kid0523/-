@@ -56,28 +56,31 @@ def job_scan_market():
     print(f"[{datetime.datetime.now()}] Rolling Scan Started: {current_idx} to {end_idx-1} (Total: {total_tickers})")
     
     for ticker in batch:
-        df = fetch_finmind_data(ticker, days=40)
-        if df is not None and not df.empty:
-            res = evaluate_stock(df)
-            if res.get('candidate'):
-                conn = get_db()
-                c = conn.cursor()
-                today = datetime.date.today().isoformat()
-                c.execute('''
-                    INSERT INTO daily_recommendations (date, stock_id, score, win_rate, expected_max, recommended_tp, sl_price)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    today,
-                    ticker,
-                    res.get('score', 0),
-                    res['probability'],
-                    res['expected_max'],
-                    res['tp'],
-                    res['sl_price']
-                ))
-                conn.commit()
-                conn.close()
-                print(f"[!] 發現強烈推薦潛力股：{ticker}")
+        try:
+            df = fetch_finmind_data(ticker, days=40)
+            if df is not None and not df.empty:
+                res = evaluate_stock(df)
+                if res.get('candidate'):
+                    conn = get_db()
+                    c = conn.cursor()
+                    today = datetime.date.today().isoformat()
+                    c.execute('''
+                        INSERT INTO daily_recommendations (date, stock_id, score, win_rate, expected_max, recommended_tp, sl_price)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        today,
+                        ticker,
+                        res.get('score', 0),
+                        res['probability'],
+                        res['expected_max'],
+                        res['tp'],
+                        res['sl_price']
+                    ))
+                    conn.commit()
+                    conn.close()
+                    print(f"[!] 發現強烈推薦潛力股：{ticker}")
+        except Exception as e:
+            print(f"Error evaluating ticker {ticker}: {e}")
 
     new_idx = end_idx % total_tickers
     update_scan_index(new_idx)
