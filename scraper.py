@@ -96,7 +96,9 @@ def fetch_realtime_twse(stock_id: str) -> dict:
     """
     url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_{stock_id}.tw|otc_{stock_id}.tw"
     try:
-        r = requests.get(url, timeout=5)
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        r = requests.get(url, timeout=5, verify=False)
         data = r.json()
         for item in data.get("msgArray", []):
             if item.get("c") == str(stock_id):
