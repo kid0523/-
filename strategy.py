@@ -57,48 +57,69 @@ def evaluate_stock(df: pd.DataFrame) -> dict:
     if not is_candidate:
         return {"candidate": False, "reason": "未滿足球員初選條件（詳見檢核表）", "checklist": checklist, "current_price": current_close}
         
-    # Phase 2: Scoring
+    # Phase 2: Scoring (Max 100)
     score = 0
-    if vol_surge: score += 20
-    if above_5ma: score += 20
-    if gained_2pct: score += 20
     
-    # RSI
+    # 1. Volume Surge Intensity (Max 30)
+    if current_vol > (avg_vol_5 * 3):
+        score += 30
+    elif current_vol > (avg_vol_5 * 2):
+        score += 20
+    elif vol_surge: # > 1.5x
+        score += 10
+        
+    # 2. Price Momentum (Max 30)
+    if today_change >= 0.07:
+        score += 30
+    elif today_change >= 0.04:
+        score += 20
+    elif gained_2pct: # > 2%
+        score += 10
+        
+    # 3. Moving Average Divergence (Max 20)
+    bias_5ma = (current_close - ma5) / ma5 if ma5 > 0 else 0
+    if bias_5ma <= 0.04:
+        score += 20
+    elif bias_5ma <= 0.08:
+        score += 10
+        
+    # 4. Trend & RSI (Max 20)
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     rsi = 100 - (100 / (1 + rs))
-    current_rsi = float(rsi.iloc[-1])
-    if current_rsi > 50:
-        score += 20
-        
-    # Trend
+    try:
+        current_rsi = float(rsi.iloc[-1])
+    except Exception:
+        current_rsi = 50.0
+    
     ma10 = float(df['Close'].tail(10).mean())
-    if current_close > ma10:
+    trend_ok = current_close > ma10
+    rsi_ok = current_rsi > 60
+    
+    if trend_ok and rsi_ok:
         score += 20
+    elif trend_ok or current_rsi > 50:
+        score += 10
+        
+    # Rule: 必須達到 60 分才能在首頁推薦
+    if score < 60:
+        return {"candidate": False, "reason": f"未達推薦標準 (得 {score} 分，門檻 60 分)", "checklist": checklist, "current_price": current_close}
         
     # Phase 3: Convert Score to Probability & Expected Range
-    if score >= 80:
-        prob = 0.60
+    if score >= 90:
+        prob = 0.65
         exp_min, exp_max = 0.04, 0.08
         tp = 0.05
-    elif score >= 70:
+    elif score >= 75:
+        prob = 0.60
+        exp_min, exp_max = 0.03, 0.05
+        tp = 0.04
+    else: # 60~74
         prob = 0.55
-        exp_min, exp_max = 0.02, 0.05
+        exp_min, exp_max = 0.02, 0.04
         tp = 0.03
-    elif score >= 60:
-        prob = 0.50
-        exp_min, exp_max = 0.01, 0.03
-        tp = 0.02
-    else:
-        prob = 0.0
-        exp_min, exp_max = 0.0, 0.0
-        tp = 0.0
-        
-    # Rule: 只保留機率 >= 55%
-    if prob < 0.55:
-        return {"candidate": False, "reason": "Probability < 55%"}
 
     return {
         "candidate": True,

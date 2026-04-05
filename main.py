@@ -26,12 +26,13 @@ def health_check():
 scheduler = BackgroundScheduler()
 
 def clear_old_recommendations():
-    """Clear yesterday's recommendations at 15:00 every day."""
+    print(f"[{datetime.datetime.now()}] 15:00 PM Trigger: Clearing yesterday's data & Resetting Scan Index to 0")
     conn = get_db()
     c = conn.cursor()
     c.execute('DELETE FROM daily_recommendations')
     conn.commit()
     conn.close()
+    update_scan_index(0)
     print(f"[{datetime.datetime.now()}] 舊的有價證券推薦清單已清空。")
 
 def job_scan_market():
@@ -50,6 +51,10 @@ def job_scan_market():
     if total_tickers == 0: return
     
     current_idx = get_scan_index()
+    if current_idx >= total_tickers:
+        print(f"[{datetime.datetime.now()}] Daily scan finished. Resting until 15:00 tomorrow.")
+        return
+        
     end_idx = current_idx + 50
     batch = tickers[current_idx:end_idx]
     
@@ -82,7 +87,7 @@ def job_scan_market():
         except Exception as e:
             print(f"Error evaluating ticker {ticker}: {e}")
 
-    new_idx = end_idx % total_tickers
+    new_idx = end_idx
     update_scan_index(new_idx)
     print(f"[{datetime.datetime.now()}] Batch Scan Completed. Next start index: {new_idx}")
 
