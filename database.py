@@ -22,30 +22,6 @@ def init_db():
             exit_price REAL,
             tp_price REAL,
             sl_price REAL,
-            status TEXT, 
-            result_type TEXT, 
-            theoretical_tp BOOLEAN
-        )
-    ''')
-    
-    # recommendations cached for the day
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS daily_recommendations (
-            date TEXT,
-            stock_id TEXT,
-            score INTEGER,
-            win_rate REAL,
-            expected_min REAL,
-            expected_max REAL,
-            recommended_tp REAL,
-            sl_price REAL
-        )
-    ''')
-    
-    # Store daily market status
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS market_status (
-            date TEXT PRIMARY KEY,
             status TEXT,
             taiex_close REAL,
             recommendation_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

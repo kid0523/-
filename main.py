@@ -70,8 +70,8 @@ def job_scan_market():
                     c = conn.cursor()
                     today = datetime.date.today().isoformat()
                     c.execute('''
-                        INSERT INTO daily_recommendations (date, stock_id, score, win_rate, expected_max, recommended_tp, sl_price)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO daily_recommendations (date, stock_id, score, win_rate, expected_max, recommended_tp, sl_price, checklist)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         today,
                         ticker,
@@ -79,7 +79,8 @@ def job_scan_market():
                         res['probability'],
                         res['expected_max'],
                         res['tp'],
-                        res['sl_price']
+                        res['sl_price'],
+                        json.dumps(res.get('checklist', {}))
                     ))
                     conn.commit()
                     conn.close()
