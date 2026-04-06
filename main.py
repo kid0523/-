@@ -23,7 +23,7 @@ def health_check():
     return {"status": "ok"}
 
 
-scheduler = BackgroundScheduler()
+scheduler = BackgroundScheduler(timezone="Asia/Taipei")
 
 def clear_old_recommendations():
     print(f"[{datetime.datetime.now()}] 15:00 PM Trigger: Clearing yesterday's data & Resetting Scan Index to 0")
