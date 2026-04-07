@@ -104,10 +104,22 @@ def fetch_realtime_twse(stock_id: str) -> dict:
         for item in data.get("msgArray", []):
             if item.get("c") == str(stock_id):
                 current_price = item.get("z")
-                if current_price == '-':
-                    current_price = item.get("b", "_").split("_")[0]
-                    if not current_price or current_price == '-':
-                        current_price = item.get("y")
+                
+                # Handling limit-up where 'z' is '-' and 'b' is '0.0000_...'
+                if current_price == '-' or float(current_price) <= 0:
+                    b_bid = item.get("b", "_").split("_")[0]
+                    if b_bid and b_bid != '-' and float(b_bid) > 0:
+                        current_price = b_bid
+                    else:
+                        # Fallback to High, Low, Open, or Yesterday close
+                        for fb in ["h", "l", "o", "u", "w", "y"]:
+                            cand = item.get(fb)
+                            if cand and cand != '-' and float(cand) > 0:
+                                current_price = cand
+                                break
+                                
+                if not current_price or current_price == '-':
+                    current_price = item.get("y")
                 
                 return {
                     "price": float(current_price),
