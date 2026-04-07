@@ -178,8 +178,10 @@ def api_evaluate_stock(stock_id: str):
         today_ts = pd.Timestamp(datetime.date.today())
         
         # Smart Volume Projection Intraday!
-        import pytz
-        now = datetime.datetime.now(pytz.timezone('Asia/Taipei'))
+        import datetime as dt
+        # Use timezone without external pytz dependency
+        taipei_tz = dt.timezone(dt.timedelta(hours=8))
+        now = dt.datetime.now(taipei_tz)
         market_open = now.replace(hour=9, minute=0, second=0, microsecond=0)
         market_close = now.replace(hour=13, minute=30, second=0, microsecond=0)
         
