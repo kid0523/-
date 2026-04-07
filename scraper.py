@@ -118,3 +118,65 @@ def fetch_realtime_twse(stock_id: str) -> dict:
     except Exception as e:
         print(f"TWSE Realtime fetch error for {stock_id}:", e)
     return None
+
+def fetch_market_status():
+    """
+    Fetches the TAIEX index (t00.tw) to determine market status.
+    Returns HIGH, WEAK, or VOLATILE.
+    """
+    try:
+        url = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_t00.tw"
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        r = requests.get(url, timeout=5, verify=False)
+        data = r.json()
+        if "msgArray" in data and len(data["msgArray"]) > 0:
+            item = data["msgArray"][0]
+            current = float(item.get("z", item.get("y", 0)))
+            open_idx = float(item.get("o", item.get("y", 0)))
+            y_close = float(item.get("y", 0))
+            
+            # Simple heuristic
+            if current > y_close and current >= open_idx:
+                status = "STRONG"
+            elif current < y_close and current <= open_idx:
+                status = "WEAK"
+            else:
+                status = "VOLATILE"
+                
+            return {"status": status, "taiex_close": current}
+    except Exception as e:
+        print(f"Failed to fetch market status: {e}")
+    
+    return {"status": "UNKNOWN", "taiex_close": 0}
+
+def fetch_institutional_data(stock_id: str, days: int = 30) -> dict:
+    """
+    Fetches the institutional investors buy/sell over the last 'days' days.
+    Returns a dict with net buys for Foreign_Investor and Investment_Trust.
+    """
+    try:
+        start_date = (datetime.date.today() - datetime.timedelta(days=days)).strftime("%Y-%m-%d")
+        url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id={stock_id}&start_date={start_date}"
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        r = requests.get(url, timeout=10, verify=False)
+        data = r.json()
+        
+        foreign_net = 0
+        trust_net = 0
+        
+        if data.get('status') == 200 and data.get('data'):
+            for item in data['data']:
+                buy = int(item.get('buy', 0))
+                sell = int(item.get('sell', 0))
+                net = buy - sell
+                
+                name = item.get('name', '')
+                if name == 'Foreign_Investor':
+                    foreign_net += net
+                elif name == 'Investment_Trust':
+                    trust_net += net
+                    
+        return {"foreign_net": foreign_net, "trust_net": trust_net}
+    except Exception as e:
+        print(f"FinMind Institutional fetch error for {stock_id}: {e}", flush=True)
+        return {"foreign_net": 0, "trust_net": 0}

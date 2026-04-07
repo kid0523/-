@@ -26,14 +26,38 @@ def health_check():
 scheduler = BackgroundScheduler(timezone="Asia/Taipei")
 
 def clear_old_recommendations():
-    print(f"[{datetime.datetime.now()}] 15:00 PM Trigger: Clearing yesterday's data & Resetting Scan Index to 0")
+    print(f"[{datetime.datetime.now()}] 15:00 PM Trigger: Clearing yesterday's data & Resetting Scan Index to 0", flush=True)
     conn = get_db()
     c = conn.cursor()
     c.execute('DELETE FROM daily_recommendations')
     conn.commit()
     conn.close()
     update_scan_index(0)
-    print(f"[{datetime.datetime.now()}] 舊的有價證券推薦清單已清空。")
+    print(f"[{datetime.datetime.now()}] 舊的有價證券推薦清單已清空。", flush=True)
+
+def intraday_survival_check():
+    print(f"[{datetime.datetime.now()}] 09:30 AM Trigger: Intraday Survival Check Started", flush=True)
+    from scraper import fetch_realtime_twse
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT stock_id FROM daily_recommendations WHERE score > 0")
+    rows = c.fetchall()
+    
+    eliminated = 0
+    for row in rows:
+        ticker = row['stock_id']
+        rt = fetch_realtime_twse(ticker)
+        if rt:
+            # Rule 1: Falling below Open price (Black candle out)
+            # Rule 2: Fall from intraday high > 3%
+            if rt['price'] < rt['open'] or (rt['high'] > 0 and (rt['price'] / rt['high']) < 0.97):
+                c.execute("UPDATE daily_recommendations SET score = -50 WHERE stock_id = ?", (ticker,))
+                print(f"Eliminated {ticker}: weakness detected. Price: {rt['price']}, Open: {rt['open']}", flush=True)
+                eliminated += 1
+                
+    conn.commit()
+    conn.close()
+    print(f"[{datetime.datetime.now()}] Survival check complete. Eliminated {eliminated} dropping stocks.", flush=True)
 
 def job_scan_market():
     """
@@ -44,7 +68,7 @@ def job_scan_market():
         with open('tickers.json', 'r') as f:
             tickers = json.load(f)
     except Exception as e:
-        print("無法讀取 tickers.json：", e)
+        print("無法讀取 tickers.json：", e, flush=True)
         return
         
     total_tickers = len(tickers)
@@ -52,45 +76,53 @@ def job_scan_market():
     
     current_idx = get_scan_index()
     if current_idx >= total_tickers:
-        print(f"[{datetime.datetime.now()}] Daily scan finished. Resting until 15:00 tomorrow.")
+        print(f"[{datetime.datetime.now()}] Daily scan finished. Resting until 15:00 tomorrow.", flush=True)
         return
         
     end_idx = current_idx + 50
     batch = tickers[current_idx:end_idx]
     
-    print(f"[{datetime.datetime.now()}] Rolling Scan Started: {current_idx} to {end_idx-1} (Total: {total_tickers})")
+    print(f"[{datetime.datetime.now()}] Rolling Scan Started: {current_idx} to {end_idx-1} (Total: {total_tickers})", flush=True)
     
     for ticker in batch:
         try:
             df = fetch_finmind_data(ticker, days=40)
             if df is not None and not df.empty:
+                from strategy import evaluate_stock, apply_institutional_score
+                from scraper import fetch_institutional_data
+                
                 res = evaluate_stock(df)
                 if res.get('candidate'):
-                    conn = get_db()
-                    c = conn.cursor()
-                    today = datetime.date.today().isoformat()
-                    c.execute('''
-                        INSERT INTO daily_recommendations (date, stock_id, score, win_rate, expected_max, recommended_tp, sl_price, checklist)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        today,
-                        ticker,
-                        res.get('score', 0),
-                        res['probability'],
-                        res['expected_max'],
-                        res['tp'],
-                        res['sl_price'],
-                        json.dumps(res.get('checklist', {}))
-                    ))
-                    conn.commit()
-                    conn.close()
-                    print(f"[!] 發現強烈推薦潛力股：{ticker}")
+                    # Optimized: Only fetch chip data if technicals pass
+                    inst_data = fetch_institutional_data(ticker, days=30)
+                    res = apply_institutional_score(res, inst_data)
+                    
+                    if res.get('candidate'):
+                        conn = get_db()
+                        c = conn.cursor()
+                        today = datetime.date.today().isoformat()
+                        c.execute('''
+                            INSERT INTO daily_recommendations (date, stock_id, score, win_rate, expected_max, recommended_tp, sl_price, checklist)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (
+                            today,
+                            ticker,
+                            res.get('score', 0),
+                            res['probability'],
+                            res['expected_max'],
+                            res['tp'],
+                            res['sl_price'],
+                            json.dumps(res.get('checklist', {}))
+                        ))
+                        conn.commit()
+                        conn.close()
+                        print(f"[!] 發現強烈推薦潛力股：{ticker}", flush=True)
         except Exception as e:
-            print(f"Error evaluating ticker {ticker}: {e}")
+            print(f"Error evaluating ticker {ticker}: {e}", flush=True)
 
     new_idx = end_idx
     update_scan_index(new_idx)
-    print(f"[{datetime.datetime.now()}] Batch Scan Completed. Next start index: {new_idx}")
+    print(f"[{datetime.datetime.now()}] Batch Scan Completed. Next start index: {new_idx}", flush=True)
 
 @app.on_event("startup")
 def startup_event():
@@ -98,6 +130,7 @@ def startup_event():
     # Schedule job every 5 mins between 9:00 - 13:30 (simulated)
     scheduler.add_job(job_scan_market, 'interval', minutes=15)
     scheduler.add_job(clear_old_recommendations, 'cron', hour=15, minute=0)
+    scheduler.add_job(intraday_survival_check, 'cron', hour=9, minute=30)
     scheduler.start()
     
     # Run once manually on startup for testing so we have data
@@ -109,15 +142,8 @@ def shutdown_event():
 
 @app.get("/api/market-status")
 def api_market_status():
-    today = datetime.date.today().isoformat()
-    conn = get_db()
-    c = conn.cursor()
-    c.execute('SELECT * FROM market_status WHERE date = ?', (today,))
-    row = c.fetchone()
-    conn.close()
-    if row:
-        return dict(row)
-    return {"status": "UNKNOWN", "message": "Market not scanned yet"}
+    from scraper import fetch_market_status
+    return fetch_market_status()
 
 @app.get("/api/recommendations")
 def api_recommendations():
@@ -125,7 +151,8 @@ def api_recommendations():
     # or today morning. Since we DELETE at 15:00, we can just return ALL rows currently in the tabel!
     conn = get_db()
     c = conn.cursor()
-    c.execute('SELECT * FROM daily_recommendations ORDER BY score DESC, expected_max DESC LIMIT 10')
+    # Read only surviving recommendations (score > 0)
+    c.execute('SELECT * FROM daily_recommendations WHERE score > 0 ORDER BY score DESC, expected_max DESC LIMIT 10')
     rows = [dict(row) for row in c.fetchall()]
     conn.close()
     return rows
@@ -150,14 +177,35 @@ def api_evaluate_stock(stock_id: str):
         # We enforce injecting the realtime price as "today"
         today_ts = pd.Timestamp(datetime.date.today())
         
+        # Smart Volume Projection Intraday!
+        import pytz
+        now = datetime.datetime.now(pytz.timezone('Asia/Taipei'))
+        market_open = now.replace(hour=9, minute=0, second=0, microsecond=0)
+        market_close = now.replace(hour=13, minute=30, second=0, microsecond=0)
+        
+        vol = rt_data['volume']
+        if market_open <= now <= market_close:
+            elapsed_minutes = (now - market_open).total_seconds() / 60.0
+            if elapsed_minutes > 0:
+                projected_vol = vol * (270.0 / elapsed_minutes)
+                vol = projected_vol # Substitute with projected final volume
+                print(f"[Volume Prediction] {stock_code}: real={rt_data['volume']}, projected={vol}", flush=True)
+
         df.loc[today_ts] = {
             'Close': rt_data['price'],
-            'Volume': rt_data['volume'],
+            'Volume': vol,
             'Open': rt_data['open'],
             'High': rt_data['high'],
             'Low': rt_data['low']
         }
         
+    from strategy import evaluate_stock, apply_institutional_score
     res = evaluate_stock(df)
+    
+    if res.get('candidate'):
+        from scraper import fetch_institutional_data
+        inst_data = fetch_institutional_data(stock_code, days=30)
+        res = apply_institutional_score(res, inst_data)
+        
     res['stock_id'] = stock_id
     return res

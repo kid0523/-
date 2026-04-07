@@ -132,3 +132,43 @@ def evaluate_stock(df: pd.DataFrame) -> dict:
         "sl_price": current_close * 0.98, # -2% fixed stop loss
         "checklist": checklist
     }
+
+def apply_institutional_score(res: dict, inst_data: dict) -> dict:
+    """
+    Applies score modifications based on institutional investors' net buy/sell.
+    """
+    if not res.get('candidate'):
+        return res
+        
+    foreign = inst_data.get('foreign_net', 0)
+    trust = inst_data.get('trust_net', 0)
+    
+    foreign_lots = foreign // 1000
+    trust_lots = trust // 1000
+    
+    checklist = res.get('checklist', {})
+    
+    score_adj = 0
+    chip_status = f"籌碼面：近一月外資 {foreign_lots}張 / 投信 {trust_lots}張"
+    
+    if foreign_lots > 0 and trust_lots > 0:
+        score_adj += 20
+        checklist[chip_status] = "土洋雙買 (大幅加分)"
+    elif foreign_lots > 300 or trust_lots > 300:
+        score_adj += 10
+        checklist[chip_status] = "強勢法人囤貨 (加分)"
+    elif foreign_lots < -1500 or trust_lots < -800:
+        score_adj -= 15
+        checklist[chip_status] = "遭遇主力倒貨 (高度警戒)"
+    else:
+        checklist[chip_status] = "籌碼動向無明顯異常"
+        
+    old_score = res.get('score', 0)
+    new_score = old_score + score_adj
+    res['score'] = min(new_score, 100) # Cap at 100
+    
+    if res['score'] < 60:
+        res['candidate'] = False
+        res['reason'] = f"法人賣壓過重，綜合評價降至 {res['score']} 分而被淘汰。"
+        
+    return res
