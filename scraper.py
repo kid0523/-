@@ -1,6 +1,7 @@
 import requests
 import pandas as pd
 import datetime
+import urllib3
 
 def fetch_finmind_data(stock_id: str, days: int = 40) -> pd.DataFrame:
     """
