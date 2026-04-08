@@ -19,7 +19,7 @@ app.add_middleware(
 )
 
 @app.api_route("/", methods=["GET", "HEAD"])
-def health_check():
+async def health_check():
     return {"status": "ok"}
 
 
@@ -85,6 +85,8 @@ def job_scan_market():
     print(f"[{datetime.datetime.now()}] Rolling Scan Started: {current_idx} to {end_idx-1} (Total: {total_tickers})", flush=True)
     
     for ticker in batch:
+        import time
+        time.sleep(1.0) # 加上 1 秒延遲，避免連續請求造成 FinMind API 超時
         try:
             df = fetch_finmind_data(ticker, days=40)
             if df is not None and not df.empty:
@@ -127,14 +129,15 @@ def job_scan_market():
 @app.on_event("startup")
 def startup_event():
     init_db()
-    # Schedule job every 5 mins between 9:00 - 13:30 (simulated)
+    # Schedule job every 15 mins
     scheduler.add_job(job_scan_market, 'interval', minutes=15)
     scheduler.add_job(clear_old_recommendations, 'cron', hour=15, minute=0)
     scheduler.add_job(intraday_survival_check, 'cron', hour=9, minute=30)
-    scheduler.start()
     
-    # Run once manually on startup for testing so we have data
-    job_scan_market()
+    # Run once manually on startup in the background (prevent blocking Uvicorn startup)
+    scheduler.add_job(job_scan_market, 'date', run_date=datetime.datetime.now())
+    
+    scheduler.start()
 
 @app.on_event("shutdown")
 def shutdown_event():
