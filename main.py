@@ -135,7 +135,8 @@ def startup_event():
     scheduler.add_job(intraday_survival_check, 'cron', hour=9, minute=30)
     
     # Run once manually on startup in the background (prevent blocking Uvicorn startup)
-    scheduler.add_job(job_scan_market, 'date', run_date=datetime.datetime.now())
+    import threading
+    threading.Thread(target=job_scan_market, daemon=True).start()
     
     scheduler.start()
 
