@@ -118,15 +118,18 @@ def fetch_realtime_twse(stock_id: str) -> dict:
                                 current_price = cand
                                 break
                                 
-                if not current_price or current_price == '-':
-                    current_price = item.get("y")
-                
+                def s2f(val, default=0):
+                    try:
+                        return float(val) if val and val != '-' else default
+                    except:
+                        return default
+                        
                 return {
                     "price": float(current_price),
-                    "volume": float(item.get("v", 0)) * 1000, # TWSE 'v' is in lots (1000 shares)
-                    "open": float(item.get("o", current_price)) if item.get("o") != '-' else float(current_price),
-                    "high": float(item.get("h", current_price)) if item.get("h") != '-' else float(current_price),
-                    "low": float(item.get("l", current_price)) if item.get("l") != '-' else float(current_price)
+                    "volume": s2f(item.get("v")) * 1000,
+                    "open": s2f(item.get("o"), float(current_price)),
+                    "high": s2f(item.get("h"), float(current_price)),
+                    "low": s2f(item.get("l"), float(current_price))
                 }
     except Exception as e:
         print(f"TWSE Realtime fetch error for {stock_id}:", e)

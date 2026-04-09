@@ -170,9 +170,21 @@ def api_evaluate_stock(stock_id: str):
     from scraper import fetch_realtime_twse
     
     stock_code = stock_id.replace('.TW', '')
+    stock_code = stock_id.replace('.TW', '')
     df = fetch_finmind_data(stock_code, days=40)
+    
+    # Inject Real-time Data
+    rt_data = fetch_realtime_twse(stock_code)
+    
     if df is None or df.empty:
-        return {"error": "無法取得該股票的歷史資料", "candidate": False}
+        # FinMind failed or no data. Return minimal info for selling.
+        if rt_data:
+            return {
+                "candidate": False, 
+                "error": "無法取得該股票的歷史資料",
+                "current_price": rt_data['price']
+            }
+        return {"error": "無法取得該股票的歷史資料且無即時報價", "candidate": False}
         
     # Inject Real-time Data
     rt_data = fetch_realtime_twse(stock_code)
