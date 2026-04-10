@@ -4,3 +4,4 @@ pandas
 requests
 beautifulsoup4
 apscheduler
+psycopg2-binary

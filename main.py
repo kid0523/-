@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 from scraper import fetch_taiex_daily, get_market_status, fetch_stock_history, fetch_finmind_data
 from strategy import evaluate_stock
-from database import init_db, get_db, get_scan_index, update_scan_index
+from database import init_db, get_db, get_scan_index, update_scan_index, execute_query
 import datetime
 import json
 import sqlite3
@@ -28,8 +28,7 @@ scheduler = BackgroundScheduler(timezone="Asia/Taipei")
 def clear_old_recommendations():
     print(f"[{datetime.datetime.now()}] 15:00 PM Trigger: Clearing yesterday's data & Resetting Scan Index to 0", flush=True)
     conn = get_db()
-    c = conn.cursor()
-    c.execute('DELETE FROM daily_recommendations')
+    execute_query(conn, 'DELETE FROM daily_recommendations')
     conn.commit()
     conn.close()
     update_scan_index(0)
@@ -39,8 +38,7 @@ def intraday_survival_check():
     print(f"[{datetime.datetime.now()}] 09:30 AM Trigger: Intraday Survival Check Started", flush=True)
     from scraper import fetch_realtime_twse
     conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT stock_id FROM daily_recommendations WHERE score > 0")
+    c = execute_query(conn, "SELECT stock_id FROM daily_recommendations WHERE score > 0")
     rows = c.fetchall()
     
     eliminated = 0
@@ -51,7 +49,7 @@ def intraday_survival_check():
             # Rule 1: Falling below Open price (Black candle out)
             # Rule 2: Fall from intraday high > 3%
             if rt['price'] < rt['open'] or (rt['high'] > 0 and (rt['price'] / rt['high']) < 0.97):
-                c.execute("UPDATE daily_recommendations SET score = -50 WHERE stock_id = ?", (ticker,))
+                execute_query(conn, "UPDATE daily_recommendations SET score = -50 WHERE stock_id = ?", (ticker,))
                 print(f"Eliminated {ticker}: weakness detected. Price: {rt['price']}, Open: {rt['open']}", flush=True)
                 eliminated += 1
                 
@@ -101,9 +99,8 @@ def job_scan_market():
                     
                     if res.get('candidate'):
                         conn = get_db()
-                        c = conn.cursor()
                         today = datetime.date.today().isoformat()
-                        c.execute('''
+                        execute_query(conn, '''
                             INSERT INTO daily_recommendations (date, stock_id, score, win_rate, expected_max, recommended_tp, sl_price, checklist)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
@@ -154,9 +151,7 @@ def api_recommendations():
     # Because we do midnight scanning, "today's" recommendations might be generated yesterday night 
     # or today morning. Since we DELETE at 15:00, we can just return ALL rows currently in the tabel!
     conn = get_db()
-    c = conn.cursor()
-    # Read only surviving recommendations (score > 0)
-    c.execute('SELECT * FROM daily_recommendations WHERE score > 0 ORDER BY score DESC, expected_max DESC LIMIT 10')
+    c = execute_query(conn, 'SELECT * FROM daily_recommendations WHERE score > 0 ORDER BY score DESC, expected_max DESC LIMIT 10')
     rows = [dict(row) for row in c.fetchall()]
     conn.close()
     return rows
