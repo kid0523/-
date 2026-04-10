@@ -10,7 +10,7 @@ def fetch_finmind_data(stock_id: str, days: int = 40) -> pd.DataFrame:
     try:
         start_date = (datetime.date.today() - datetime.timedelta(days=days)).strftime("%Y-%m-%d")
         url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id={stock_id}&start_date={start_date}"
-        r = requests.get(url, timeout=10)
+        r = requests.get(url, timeout=30)
         data = r.json()
         if data.get('status') == 200 and data.get('data'):
             df = pd.DataFrame(data['data'])
@@ -174,7 +174,7 @@ def fetch_institutional_data(stock_id: str, days: int = 30) -> dict:
         start_date = (datetime.date.today() - datetime.timedelta(days=days)).strftime("%Y-%m-%d")
         url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id={stock_id}&start_date={start_date}"
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        r = requests.get(url, timeout=10, verify=False)
+        r = requests.get(url, timeout=30, verify=False)
         data = r.json()
         
         foreign_net = 0
