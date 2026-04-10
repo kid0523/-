@@ -82,13 +82,17 @@ def job_scan_market():
     
     print(f"[{datetime.datetime.now()}] Rolling Scan Started: {current_idx} to {end_idx-1} (Total: {total_tickers})", flush=True)
     
+    # Pre-fetch the latest whole-market TWSE Margin Data
+    from scraper import fetch_market_margin_data
+    margin_cache = fetch_market_margin_data()
+    
     for ticker in batch:
         import time
         time.sleep(1.0) # 加上 1 秒延遲，避免連續請求造成 FinMind API 超時
         try:
             df = fetch_finmind_data(ticker, days=40)
             if df is not None and not df.empty:
-                from strategy import evaluate_stock, apply_institutional_score
+                from strategy import evaluate_stock, apply_institutional_score, apply_margin_score
                 from scraper import fetch_institutional_data
                 
                 res = evaluate_stock(df)
@@ -96,6 +100,9 @@ def job_scan_market():
                     # Optimized: Only fetch chip data if technicals pass
                     inst_data = fetch_institutional_data(ticker, days=30)
                     res = apply_institutional_score(res, inst_data)
+                    
+                    if res.get('candidate'):
+                        res = apply_margin_score(res, ticker, margin_cache)
                     
                     if res.get('candidate'):
                         conn = get_db()
@@ -212,13 +219,17 @@ def api_evaluate_stock(stock_id: str):
             'Low': rt_data['low']
         }
         
-    from strategy import evaluate_stock, apply_institutional_score
+    from strategy import evaluate_stock, apply_institutional_score, apply_margin_score
     res = evaluate_stock(df)
     
     if res.get('candidate'):
-        from scraper import fetch_institutional_data
+        from scraper import fetch_institutional_data, fetch_market_margin_data
         inst_data = fetch_institutional_data(stock_code, days=30)
         res = apply_institutional_score(res, inst_data)
+        
+        if res.get('candidate'):
+            margin_cache = fetch_market_margin_data()
+            res = apply_margin_score(res, stock_code, margin_cache)
         
     res['stock_id'] = stock_id
     return res

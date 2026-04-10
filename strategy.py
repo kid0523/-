@@ -161,6 +161,7 @@ def apply_institutional_score(res: dict, inst_data: dict) -> dict:
         score_adj -= 15
         checklist[chip_status] = "遭遇主力倒貨 (高度警戒)"
     else:
+
         checklist[chip_status] = "籌碼動向無明顯異常"
         
     old_score = res.get('score', 0)
@@ -170,5 +171,56 @@ def apply_institutional_score(res: dict, inst_data: dict) -> dict:
     if res['score'] < 60:
         res['candidate'] = False
         res['reason'] = f"法人賣壓過重，綜合評價降至 {res['score']} 分而被淘汰。"
+        
+    return res
+
+def apply_margin_score(res: dict, stock_id: str, margin_cache: dict) -> dict:
+    """
+    Applies score modifications based on Margin Trading data from TWSE OpenAPI.
+    """
+    if not res.get('candidate'):
+        return res
+        
+    stock_margin = margin_cache.get(str(stock_id)) if margin_cache else None
+    
+    if not stock_margin:
+        return res
+        
+    short_bal = stock_margin.get('short_balance', 0)
+    margin_ratio = stock_margin.get('margin_ratio', 0)
+    
+    checklist = res.get('checklist', {})
+    score_adj = 0
+    margin_status = f"融資券：融資使用率 {margin_ratio*100:.1f}% / 融券餘額 {short_bal}張"
+    
+    # 短線上融券餘額偏高容易醞釀軋空
+    if short_bal > 3000:
+        score_adj += 20
+        checklist[margin_status] = "高融券具潛在軋空動能 (大幅加分)"
+    elif short_bal > 1000:
+        score_adj += 10
+        checklist[margin_status] = "融券偏高有軋空機會 (加分)"
+        
+    # 融資使用率過大代表散戶多、籌碼凌亂
+    if margin_ratio > 0.6:
+        score_adj -= 15
+        checklist[margin_status] = "融資浮額過高、籌碼凌亂 (高度警戒)"
+    elif margin_ratio > 0.4:
+        score_adj -= 5
+        checklist[margin_status] = "融資使用偏多、留意賣壓 (扣分)"
+    elif margin_ratio < 0.2:
+        score_adj += 5
+        checklist[margin_status] = "融資低水位、籌碼乾淨 (加分)"
+        
+    if margin_status not in checklist:
+        checklist[margin_status] = "融資券表現平穩無異常"
+        
+    old_score = res.get('score', 0)
+    new_score = old_score + score_adj
+    res['score'] = min(max(new_score, 0), 100) # Cap at 100, floor at 0
+    
+    if res['score'] < 60:
+        res['candidate'] = False
+        res['reason'] = f"融資籌碼凌亂，綜合評價降至 {res['score']} 分而被淘汰。"
         
     return res

@@ -196,3 +196,51 @@ def fetch_institutional_data(stock_id: str, days: int = 30) -> dict:
     except Exception as e:
         print(f"FinMind Institutional fetch error for {stock_id}: {e}", flush=True)
         return {"foreign_net": 0, "trust_net": 0}
+
+_MARGIN_CACHE = {}
+_MARGIN_CACHE_DATE = None
+
+def fetch_market_margin_data() -> dict:
+    """
+    Fetches the margin trading (融資融券) data for ALL stocks in one OpenAPI call.
+    Caches the result by date to prevent redundant API calls.
+    Returns a dict mapping stock_id to margin information.
+    """
+    global _MARGIN_CACHE, _MARGIN_CACHE_DATE
+    today = datetime.date.today()
+    if _MARGIN_CACHE_DATE == today and _MARGIN_CACHE:
+        return _MARGIN_CACHE
+        
+    try:
+        url = "https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN"
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        r = requests.get(url, timeout=30, verify=False)
+        data = r.json()
+        
+        new_cache = {}
+        for row in data:
+            code = row.get("股票代號")
+            if code:
+                def s2i(val):
+                    try: return int(val.replace(',', '')) if val else 0
+                    except: return 0
+                new_cache[str(code)] = {
+                    "short_balance": s2i(row.get("融券今日餘額")),
+                    "margin_balance": s2i(row.get("融資今日餘額")),
+                    "margin_limit": s2i(row.get("融資限額")),
+                    "margin_ratio": 0 # (margin_balance / margin_limit) if margin_limit > 0
+                }
+                
+                # 計算融資使用率
+                if new_cache[str(code)]["margin_limit"] > 0:
+                    new_cache[str(code)]["margin_ratio"] = new_cache[str(code)]["margin_balance"] / new_cache[str(code)]["margin_limit"]
+
+        if new_cache:
+            _MARGIN_CACHE = new_cache
+            _MARGIN_CACHE_DATE = today
+            print(f"[{datetime.datetime.now()}] TWSE Margin Data successfully fetched & cached for {len(_MARGIN_CACHE)} stocks.", flush=True)
+    except Exception as e:
+        print("Failed to fetch market margin data from TWSE:", e)
+        
+    return _MARGIN_CACHE
+
