@@ -24,38 +24,53 @@ def evaluate_stock(df: pd.DataFrame) -> dict:
     drop_pct = (min_20 - max_20) / max_20
     has_dropped_10 = drop_pct <= -0.10
     
-    # Condition 2: 最近3天未創新低
+    # Condition 2: 最近3天未創新低 (止跌跡象)
     min_3 = float(recent_3['Low'].min())
     old_min = float(df.iloc[-20:-3]['Low'].min()) if len(df) >= 20 else min_20
     no_new_low = min_3 >= old_min
     
-    # Condition 3: 今日成交量 > 5日均量 * 1.5
+    # Condition 3: 今日漲幅與紅K回彈 (抄底確認)
+    today_change = (current_close - prev_close) / prev_close
+    current_open = float(recent_20['Open'].iloc[-1])
+    is_rebound = (current_close > prev_close) and (current_close >= current_open) # 收紅或收平且上漲
+    
+    # Condition 4: 今日成交量放量
     current_vol = float(recent_20['Volume'].iloc[-1])
     avg_vol_5 = float(recent_5['Volume'].mean()) 
     vol_surge = current_vol > (avg_vol_5 * 1.5)
     
-    # Condition 4: 股價站上5MA
+    # Condition 5: 往前推算是否連續下跌至少 3 天
+    drop_streak = 0
+    for i in range(2, min(10, len(df))):
+        c = float(df['Close'].iloc[-i])
+        p = float(df['Close'].iloc[-(i+1)])
+        # 收跌就算下跌天數 (嚴格下跌)
+        if c <= p:
+            drop_streak += 1
+        else:
+            break
+            
+    recent_declined = drop_streak >= 3
+    
+    # Condition 6: 股價是否站上 5MA
     ma5 = float(recent_5['Close'].mean())
     above_5ma = current_close > ma5
-    
-    # Condition 5: 今日漲幅 > 2%
-    today_change = (current_close - prev_close) / prev_close
-    gained_2pct = today_change > 0.02
     
     # Checklist
     checklist = {
         "has_dropped_10": bool(has_dropped_10),
         "no_new_low": bool(no_new_low),
+        "is_rebound": bool(is_rebound),
         "vol_surge": bool(vol_surge),
-        "above_5ma": bool(above_5ma),
-        "gained_2pct": bool(gained_2pct)
+        "recent_declined": bool(recent_declined),
+        "above_5ma": bool(above_5ma)
     }
 
-    # Phase 1: Candidate Pool Filter
-    is_candidate = has_dropped_10 and no_new_low and vol_surge and above_5ma and gained_2pct
+    # Phase 1: Candidate Pool Filter - 抄底邏輯
+    is_candidate = has_dropped_10 and no_new_low and is_rebound and vol_surge and recent_declined
     
     if not is_candidate:
-        return {"candidate": False, "reason": "未滿足球員初選條件（詳見檢核表）", "checklist": checklist, "current_price": current_close}
+        return {"candidate": False, "reason": "未滿足球員初選條件（須連續下跌3天以上且今日爆量回轉）", "checklist": checklist, "current_price": current_close}
         
     # Phase 2: Scoring (Max 100)
     score = 0
@@ -73,7 +88,7 @@ def evaluate_stock(df: pd.DataFrame) -> dict:
         score += 30
     elif today_change >= 0.04:
         score += 20
-    elif gained_2pct: # > 2%
+    elif today_change > 0.01:
         score += 10
         
     # 3. Moving Average Divergence (Max 20)
@@ -161,7 +176,6 @@ def apply_institutional_score(res: dict, inst_data: dict) -> dict:
         score_adj -= 15
         checklist[chip_status] = "遭遇主力倒貨 (高度警戒)"
     else:
-
         checklist[chip_status] = "籌碼動向無明顯異常"
         
     old_score = res.get('score', 0)

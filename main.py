@@ -130,6 +130,119 @@ def job_scan_market():
     update_scan_index(new_idx)
     print(f"[{datetime.datetime.now()}] Batch Scan Completed. Next start index: {new_idx}", flush=True)
 
+def auto_buy_job():
+    """
+    Runs at 09:30 AM. Fetches top 10 recommended stocks and buys them.
+    Each stock gets max 20,000 NTD budget.
+    """
+    print(f"[{datetime.datetime.now()}] 09:30 AM Trigger: Auto-Buy Job Started", flush=True)
+    from scraper import fetch_realtime_twse
+    conn = get_db()
+    
+    # Optional: Only buy if we don't already have a full portfolio.
+    c = execute_query(conn, 'SELECT COUNT(*) as count FROM virtual_portfolio')
+    current_holdings = c.fetchone()['count']
+    if current_holdings >= 10:
+         print(f"[{datetime.datetime.now()}] Portfolio is full ({current_holdings}). Skipping auto-buy.", flush=True)
+         conn.close()
+         return
+         
+    # Get top 10
+    c = execute_query(conn, 'SELECT * FROM daily_recommendations WHERE score > 0 ORDER BY score DESC, expected_max DESC LIMIT ?', (10 - current_holdings,))
+    rows = c.fetchall()
+    
+    today_str = datetime.date.today().isoformat()
+    budget_per_stock = 20000.0
+    bought_count = 0
+    
+    for row in rows:
+        ticker = row['stock_id']
+        # Check if already holding
+        c = execute_query(conn, 'SELECT id FROM virtual_portfolio WHERE stock_id = ?', (ticker,))
+        if c.fetchone():
+            continue
+            
+        rt = fetch_realtime_twse(ticker)
+        
+        if rt and rt['price'] > 0:
+            price = rt['price']
+            # Calculate shares
+            shares = int(budget_per_stock // price)
+            if shares == 0:
+                continue
+            
+            # Recalculate SL and TP relative to real entry price
+            sl_p = price * 0.98
+            tp_p = price * (1.0 + float(row['recommended_tp']))
+                
+            execute_query(conn, '''
+                INSERT INTO virtual_portfolio (stock_id, buy_date, buy_price, shares, tp_price, sl_price)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (ticker, today_str, price, shares, tp_p, sl_p))
+            bought_count += 1
+            print(f"[Auto-Buy] Bought {ticker} at {price} x {shares} shares.", flush=True)
+
+    conn.commit()
+    conn.close()
+    print(f"[{datetime.datetime.now()}] Auto-Buy complete. Bought {bought_count} stocks.", flush=True)
+
+def auto_monitor_job():
+    """
+    Runs every 5 mins from 09:00 to 13:30.
+    Checks portfolio against realtime price. If hits SL/TP, sells and records.
+    """
+    from scraper import fetch_realtime_twse
+    import time
+    
+    conn = get_db()
+    c = execute_query(conn, 'SELECT * FROM virtual_portfolio')
+    rows = [dict(r) for r in c.fetchall()]
+    
+    if not rows:
+        conn.close()
+        return
+        
+    today_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sold_count = 0
+    
+    for row in rows:
+        ticker = row['stock_id']
+        rt = fetch_realtime_twse(ticker)
+        time.sleep(0.5) # Prevent TWSE rate limit
+        
+        if rt and rt['price'] > 0:
+            price = rt['price']
+            tp = row['tp_price']
+            sl = row['sl_price']
+            
+            reason = None
+            if price >= tp:
+                reason = "TP (停利)"
+            elif price <= sl:
+                reason = "SL (停損)"
+                
+            if reason:
+                pnl = (price - row['buy_price']) * row['shares']
+                pnl_pct = (price - row['buy_price']) / row['buy_price']
+                
+                # Delete from portfolio
+                execute_query(conn, 'DELETE FROM virtual_portfolio WHERE id = ?', (row['id'],))
+                
+                # Insert to history
+                execute_query(conn, '''
+                    INSERT INTO virtual_trade_history 
+                    (stock_id, buy_date, sell_date, buy_price, sell_price, shares, pnl, pnl_percent, exit_reason)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (ticker, row['buy_date'], today_str, row['buy_price'], price, row['shares'], pnl, pnl_pct, reason))
+                
+                sold_count += 1
+                print(f"[Auto-Sell] Sold {ticker} at {price}. Reason: {reason}. PNL: {pnl}", flush=True)
+                
+    conn.commit()
+    conn.close()
+    if sold_count > 0:
+        print(f"[{datetime.datetime.now()}] Auto-Monitor complete. Sold {sold_count} positions.", flush=True)
+
 @app.on_event("startup")
 def startup_event():
     init_db()
@@ -137,6 +250,10 @@ def startup_event():
     scheduler.add_job(job_scan_market, 'interval', minutes=15)
     scheduler.add_job(clear_old_recommendations, 'cron', hour=15, minute=0)
     scheduler.add_job(intraday_survival_check, 'cron', hour=9, minute=30)
+    
+    # New Auto-Trading Jobs
+    scheduler.add_job(auto_buy_job, 'cron', day_of_week='mon-fri', hour=9, minute=30)
+    scheduler.add_job(auto_monitor_job, 'cron', day_of_week='mon-fri', hour='9-13', minute='*/5')
     
     # Run once manually on startup in the background (prevent blocking Uvicorn startup)
     import threading
@@ -233,3 +350,19 @@ def api_evaluate_stock(stock_id: str):
         
     res['stock_id'] = stock_id
     return res
+
+@app.get("/api/virtual-portfolio")
+def api_virtual_portfolio():
+    conn = get_db()
+    c = execute_query(conn, 'SELECT * FROM virtual_portfolio')
+    rows = [dict(row) for row in c.fetchall()]
+    conn.close()
+    return rows
+
+@app.get("/api/virtual-history")
+def api_virtual_history():
+    conn = get_db()
+    c = execute_query(conn, 'SELECT * FROM virtual_trade_history ORDER BY sell_date DESC LIMIT 100')
+    rows = [dict(row) for row in c.fetchall()]
+    conn.close()
+    return rows

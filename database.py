@@ -86,6 +86,35 @@ def init_db():
         )
     ''')
     
+    # Store currently held auto-traded virtual stocks
+    c.execute(f'''
+        CREATE TABLE IF NOT EXISTS virtual_portfolio (
+            {id_col},
+            stock_id TEXT,
+            buy_date TEXT,
+            buy_price REAL,
+            shares INTEGER,
+            tp_price REAL,
+            sl_price REAL
+        )
+    ''')
+    
+    # Store completed auto-trades history
+    c.execute(f'''
+        CREATE TABLE IF NOT EXISTS virtual_trade_history (
+            {id_col},
+            stock_id TEXT,
+            buy_date TEXT,
+            sell_date TEXT,
+            buy_price REAL,
+            sell_price REAL,
+            shares INTEGER,
+            pnl REAL,
+            pnl_percent REAL,
+            exit_reason TEXT
+        )
+    ''')
+    
     c.execute('''
     CREATE TABLE IF NOT EXISTS scan_state (
         id INTEGER PRIMARY KEY CHECK (id = 1),
