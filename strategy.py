@@ -18,82 +18,59 @@ def evaluate_stock(df: pd.DataFrame) -> dict:
     if prev_close == 0:
         return {"candidate": False, "reason": "Data error: prev_close is 0"}
     
-    # Condition 1: 近20天曾下跌10%
+    # ---------------- 核心選股精簡版 ---------------- #
+    # 條件 1：確實有跌過 (20天最高點跌下來至少 8% 才有「低谷」可言)
     max_20 = float(recent_20['High'].max())
     min_20 = float(recent_20['Low'].min())
-    drop_pct = (min_20 - max_20) / max_20
-    has_dropped_10 = drop_pct <= -0.10
+    has_dropped = ((max_20 - min_20) / max_20) >= 0.08
     
-    # Condition 2: 最近3天未創新低 (止跌跡象)
-    min_3 = float(recent_3['Low'].min())
-    old_min = float(df.iloc[-20:-3]['Low'].min()) if len(df) >= 20 else min_20
-    no_new_low = min_3 >= old_min
+    # 條件 2：連續三天都在低谷 (T-3, T-2, T-1 的收盤價都離20天最低點不到 5%)
+    # 這代表股價沒有一直往下破底，而是「躺在平緩的谷底休息了三天」
+    valley_3_days = recent_20['Close'].iloc[-4:-1] # 昨天、前天、大前天
+    max_in_valley = float(valley_3_days.max())
+    is_in_valley = ((max_in_valley - min_20) / min_20) <= 0.05
     
-    # Condition 3: 今日漲幅與紅K回彈 (抄底確認)
-    today_change = (current_close - prev_close) / prev_close
+    # 條件 3：有回彈的跡象 (今天收盤比昨天高，且是實體紅K)
     current_open = float(recent_20['Open'].iloc[-1])
-    is_rebound = (current_close > prev_close) and (current_close >= current_open) # 收紅或收平且上漲
-    
-    # Condition 4: 今日成交量放量
-    current_vol = float(recent_20['Volume'].iloc[-1])
-    avg_vol_5 = float(recent_5['Volume'].mean()) 
-    vol_surge = current_vol > (avg_vol_5 * 1.5)
-    
-    # Condition 5: 往前推算是否連續下跌至少 3 天
-    drop_streak = 0
-    for i in range(2, min(10, len(df))):
-        c = float(df['Close'].iloc[-i])
-        p = float(df['Close'].iloc[-(i+1)])
-        # 收跌就算下跌天數 (嚴格下跌)
-        if c <= p:
-            drop_streak += 1
-        else:
-            break
-            
-    recent_declined = drop_streak >= 3
-    
-    # Condition 6: 股價是否站上 5MA
-    ma5 = float(recent_5['Close'].mean())
-    above_5ma = current_close > ma5
+    is_rebound = (current_close > prev_close) and (current_close > current_open)
     
     # Checklist
     checklist = {
-        "has_dropped_10": bool(has_dropped_10),
-        "no_new_low": bool(no_new_low),
-        "is_rebound": bool(is_rebound),
-        "vol_surge": bool(vol_surge),
-        "recent_declined": bool(recent_declined),
-        "above_5ma": bool(above_5ma)
+        "has_dropped": bool(has_dropped),
+        "is_in_valley": bool(is_in_valley),
+        "is_rebound": bool(is_rebound)
     }
 
-    # Phase 1: Candidate Pool Filter - 抄底邏輯
-    is_candidate = has_dropped_10 and no_new_low and is_rebound and vol_surge and recent_declined
+    # Phase 1: Candidate Pool Filter - 完全依照您的「低谷回轉法則」
+    is_candidate = has_dropped and is_in_valley and is_rebound
     
     if not is_candidate:
-        return {"candidate": False, "reason": "未滿足球員初選條件（須連續下跌3天以上且今日爆量回轉）", "checklist": checklist, "current_price": current_close}
+        return {"candidate": False, "reason": "未滿足球員初選條件（未呈現連續3天躺在谷底且今日回彈之跡象）", "checklist": checklist, "current_price": current_close}
         
-    # Phase 2: Scoring (Max 100)
+    # Phase 2: Scoring (Max 100) - 因為初選大放寬，我們利用成交量跟均線來「加分」區分強弱
     score = 0
     
-    # 1. Volume Surge Intensity (Max 30)
-    if current_vol > (avg_vol_5 * 3):
+    # 1. 雖然不強求，但如果有爆量，當然是大加分 (Max 30)
+    current_vol = float(recent_20['Volume'].iloc[-1])
+    avg_vol_5 = float(recent_5['Volume'].mean()) 
+    if current_vol > (avg_vol_5 * 2):
         score += 30
-    elif current_vol > (avg_vol_5 * 2):
+    elif current_vol > (avg_vol_5 * 1.2):
+        score += 15
+        
+    # 2. 回彈力道 (Max 30)
+    today_change = (current_close - prev_close) / prev_close
+    if today_change >= 0.04:
+        score += 30
+    elif today_change >= 0.02:
         score += 20
-    elif vol_surge: # > 1.5x
+    elif today_change > 0:
         score += 10
         
-    # 2. Price Momentum (Max 30)
-    if today_change >= 0.07:
-        score += 30
-    elif today_change >= 0.04:
-        score += 20
-    elif today_change > 0.01:
-        score += 10
-        
-    # 3. Moving Average Divergence (Max 20)
+    # 3. 均線乖離程度 (底部剛起漲，通常在5MA附近) (Max 20)
+    ma5 = float(recent_5['Close'].mean())
     bias_5ma = (current_close - ma5) / ma5 if ma5 > 0 else 0
-    if bias_5ma <= 0.04:
+    if bias_5ma <= 0.05:
         score += 20
     elif bias_5ma <= 0.08:
         score += 10
@@ -166,6 +143,12 @@ def apply_institutional_score(res: dict, inst_data: dict) -> dict:
     score_adj = 0
     chip_status = f"籌碼面：近一月外資 {foreign_lots}張 / 投信 {trust_lots}張"
     
+    # 【使用者要求】：三大法人也沒有持續賣出 (若大幅度拋售則直接淘汰)
+    if foreign_lots < -1500 or trust_lots < -800:
+        res['candidate'] = False
+        res['reason'] = f"遭遇法人持續倒貨賣出，不宜抄底而被淘汰。"
+        return res
+        
     if foreign_lots > 0 and trust_lots > 0:
         score_adj += 20
         checklist[chip_status] = "土洋雙買 (大幅加分)"
