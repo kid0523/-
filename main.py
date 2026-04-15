@@ -248,12 +248,12 @@ def startup_event():
     init_db()
     # Schedule job every 15 mins
     scheduler.add_job(job_scan_market, 'interval', minutes=15)
-    scheduler.add_job(clear_old_recommendations, 'cron', hour=15, minute=0)
-    scheduler.add_job(intraday_survival_check, 'cron', hour=9, minute=30)
+    scheduler.add_job(clear_old_recommendations, 'cron', hour=15, minute=0, timezone='Asia/Taipei')
+    scheduler.add_job(intraday_survival_check, 'cron', hour=9, minute=30, timezone='Asia/Taipei')
     
     # New Auto-Trading Jobs
-    scheduler.add_job(auto_buy_job, 'cron', day_of_week='mon-fri', hour=9, minute=30)
-    scheduler.add_job(auto_monitor_job, 'cron', day_of_week='mon-fri', hour='9-13', minute='*/5')
+    scheduler.add_job(auto_buy_job, 'cron', day_of_week='mon-fri', hour=9, minute=30, timezone='Asia/Taipei')
+    scheduler.add_job(auto_monitor_job, 'cron', day_of_week='mon-fri', hour='9-13', minute='*/5', timezone='Asia/Taipei')
     
     # Run once manually on startup in the background (prevent blocking Uvicorn startup)
     import threading
