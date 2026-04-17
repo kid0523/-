@@ -18,61 +18,65 @@ def evaluate_stock(df: pd.DataFrame) -> dict:
     if prev_close == 0:
         return {"candidate": False, "reason": "Data error: prev_close is 0"}
     
-    # ---------------- 核心選股精簡版 ---------------- #
-    # 條件 1：確實有跌過 (20天最高點跌下來至少 8% 才有「低谷」可言)
+    # ---------------- 核心選股 (T+0 當沖強勢動能版) ---------------- #
+    # 條件 1：接近 20 日高點 (距離最高點不到 5%)，確保為強勢股
     max_20 = float(recent_20['High'].max())
-    min_20 = float(recent_20['Low'].min())
-    has_dropped = ((max_20 - min_20) / max_20) >= 0.08
+    near_high = (current_close >= max_20 * 0.95)
     
-    # 條件 2：連續三天都在低谷 (T-3, T-2, T-1 的收盤價都離20天最低點不到 5%)
-    # 這代表股價沒有一直往下破底，而是「躺在平緩的谷底休息了三天」
-    valley_3_days = recent_20['Close'].iloc[-4:-1] # 昨天、前天、大前天
-    max_in_valley = float(valley_3_days.max())
-    is_in_valley = ((max_in_valley - min_20) / min_20) <= 0.05
-    
-    # 條件 3：有回彈的跡象 (今天收盤比昨天高，且是實體紅K)
+    # 條件 2：今日為強勢實體紅K，且收在相對高點 (收盤價為今日波動之上半部)
     current_open = float(recent_20['Open'].iloc[-1])
-    is_rebound = (current_close > prev_close) and (current_close > current_open)
+    current_high = float(recent_20['High'].iloc[-1])
+    current_low = float(recent_20['Low'].iloc[-1])
+    is_red_candle = (current_close > current_open) and (current_close > prev_close)
+    if current_high > current_low:
+        close_position = (current_close - current_low) / (current_high - current_low)
+    else:
+        close_position = 0.0
+    closing_strong = close_position > 0.6  # 留上影線不可太長
+    
+    # 條件 3：具備基本流動性 (5日均量 > 500 張 = 500000 股)
+    avg_vol_5 = float(recent_5['Volume'].mean()) 
+    liquid_enough = avg_vol_5 > 500000
     
     # Checklist
     checklist = {
-        "has_dropped": bool(has_dropped),
-        "is_in_valley": bool(is_in_valley),
-        "is_rebound": bool(is_rebound)
+        "near_high": bool(near_high),
+        "is_red_candle": bool(is_red_candle),
+        "closing_strong": bool(closing_strong)
     }
 
-    # Phase 1: Candidate Pool Filter - 完全依照您的「低谷回轉法則」
-    is_candidate = has_dropped and is_in_valley and is_rebound
+    # Phase 1: Candidate Pool Filter - T+0 強勢動能改版
+    is_candidate = near_high and is_red_candle and closing_strong and liquid_enough
     
     if not is_candidate:
-        return {"candidate": False, "reason": "未滿足球員初選條件（未呈現連續3天躺在谷底且今日回彈之跡象）", "checklist": checklist, "current_price": current_close}
+        return {"candidate": False, "reason": "未滿足球員初選條件（未呈現逼近創高且強勢收盤之動能特徵）", "checklist": checklist, "current_price": current_close}
         
-    # Phase 2: Scoring (Max 100) - 因為初選大放寬，我們利用成交量跟均線來「加分」區分強弱
+    # Phase 2: Scoring (Max 100)
     score = 0
     
-    # 1. 雖然不強求，但如果有爆量，當然是大加分 (Max 30)
+    # 1. 爆出天量，當沖流動性最重要 (Max 30)
     current_vol = float(recent_20['Volume'].iloc[-1])
-    avg_vol_5 = float(recent_5['Volume'].mean()) 
-    if current_vol > (avg_vol_5 * 2):
+    if current_vol > (avg_vol_5 * 2.5):
         score += 30
-    elif current_vol > (avg_vol_5 * 1.2):
+    elif current_vol > (avg_vol_5 * 1.5):
         score += 15
         
-    # 2. 回彈力道 (Max 30)
+    # 2. 強勢跳升力道 (Max 30)
     today_change = (current_close - prev_close) / prev_close
-    if today_change >= 0.04:
+    if today_change >= 0.06:
         score += 30
-    elif today_change >= 0.02:
+    elif today_change >= 0.04:
         score += 20
-    elif today_change > 0:
+    elif today_change >= 0.02:
         score += 10
         
-    # 3. 均線乖離程度 (底部剛起漲，通常在5MA附近) (Max 20)
+    # 3. 均線多頭排列 (底部剛放量突破) (Max 20)
     ma5 = float(recent_5['Close'].mean())
-    bias_5ma = (current_close - ma5) / ma5 if ma5 > 0 else 0
-    if bias_5ma <= 0.05:
+    ma10 = float(df['Close'].tail(10).mean())
+    ma20 = float(recent_20['Close'].mean())
+    if ma5 > ma10 and ma10 > ma20:
         score += 20
-    elif bias_5ma <= 0.08:
+    elif ma5 > ma10:
         score += 10
         
     # 4. Trend & RSI (Max 20)
@@ -86,20 +90,16 @@ def evaluate_stock(df: pd.DataFrame) -> dict:
     except Exception:
         current_rsi = 50.0
     
-    ma10 = float(df['Close'].tail(10).mean())
-    trend_ok = current_close > ma10
-    rsi_ok = current_rsi > 60
-    
-    if trend_ok and rsi_ok:
+    if current_rsi > 70:
         score += 20
-    elif trend_ok or current_rsi > 50:
+    elif current_rsi > 60:
         score += 10
         
     # Rule: 必須達到 60 分才能在首頁推薦
     if score < 60:
         return {"candidate": False, "reason": f"未達推薦標準 (得 {score} 分，門檻 60 分)", "checklist": checklist, "current_price": current_close}
         
-    # Phase 3: Convert Score to Probability & Expected Range
+    # Phase 3: Convert Score to Probability & Expected Range (原有高目標)
     if score >= 90:
         prob = 0.65
         exp_min, exp_max = 0.04, 0.08

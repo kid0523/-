@@ -166,13 +166,24 @@ def auto_buy_job():
         
         if rt and rt['price'] > 0:
             price = rt['price']
+            open_p = rt['open']
+            
+            # --- T+0 早盤動能濾網 ---
+            # 1. 必須是上漲趨勢 (現價 > 開盤價)，代表早盤買盤強勁有動能
+            # 2. 避免買在漲停或過高位置 (現價 <= 開盤價 * 1.07)，保留 T+0 獲利空間
+            if open_p > 0 and (price <= open_p or price > open_p * 1.07):
+                print(f"[Auto-Buy Filter] Skipped {ticker}: price {price} vs open {open_p} (Weak or too high)", flush=True)
+                continue
+            
             # Calculate shares
             shares = int(budget_per_stock // price)
             if shares == 0:
                 continue
             
             # Recalculate SL and TP relative to real entry price
+            # T+0 停損可以設為 -1.5% 或是 -2%，這裡維持 -2%
             sl_p = price * 0.98
+            # 停利使用新的推薦目標 (通常為 2% ~ 3%)
             tp_p = price * (1.0 + float(row['recommended_tp']))
                 
             execute_query(conn, '''
@@ -220,6 +231,8 @@ def auto_monitor_job():
                 reason = "TP (停利)"
             elif price <= sl:
                 reason = "SL (停損)"
+            elif row['buy_date'] < datetime.date.today().isoformat():
+                reason = "T+0 逾期昨日持倉 (強制平倉)"
                 
             if reason:
                 pnl = (price - row['buy_price']) * row['shares']
@@ -243,6 +256,56 @@ def auto_monitor_job():
     if sold_count > 0:
         print(f"[{datetime.datetime.now()}] Auto-Monitor complete. Sold {sold_count} positions.", flush=True)
 
+def auto_close_job():
+    """
+    Runs at 13:25 PM.
+    Enforces T+0 strategy by closing all remaining positions in the virtual portfolio at current market price.
+    """
+    print(f"[{datetime.datetime.now()}] 13:25 PM Trigger: Auto-Close (T+0 Intraday) Job Started", flush=True)
+    from scraper import fetch_realtime_twse
+    import time
+    
+    conn = get_db()
+    c = execute_query(conn, 'SELECT * FROM virtual_portfolio')
+    rows = [dict(r) for r in c.fetchall()]
+    
+    if not rows:
+        conn.close()
+        return
+        
+    today_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sold_count = 0
+    
+    for row in rows:
+        ticker = row['stock_id']
+        rt = fetch_realtime_twse(ticker)
+        time.sleep(0.5)
+        
+        if rt and rt['price'] > 0:
+            price = rt['price']
+            reason = "T+0 強制收盤平倉"
+            
+            pnl = (price - row['buy_price']) * row['shares']
+            pnl_pct = (price - row['buy_price']) / row['buy_price']
+            
+            # Delete from portfolio
+            execute_query(conn, 'DELETE FROM virtual_portfolio WHERE id = ?', (row['id'],))
+            
+            # Insert to history
+            execute_query(conn, '''
+                INSERT INTO virtual_trade_history 
+                (stock_id, buy_date, sell_date, buy_price, sell_price, shares, pnl, pnl_percent, exit_reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (ticker, row['buy_date'], today_str, row['buy_price'], price, row['shares'], pnl, pnl_pct, reason))
+            
+            sold_count += 1
+            print(f"[Auto-Close] Sold {ticker} at {price}. Reason: {reason}. PNL: {pnl}", flush=True)
+            
+    conn.commit()
+    conn.close()
+    if sold_count > 0:
+        print(f"[{datetime.datetime.now()}] Auto-Close complete. Sold {sold_count} positions.", flush=True)
+
 @app.on_event("startup")
 def startup_event():
     init_db()
@@ -254,6 +317,7 @@ def startup_event():
     # New Auto-Trading Jobs
     scheduler.add_job(auto_buy_job, 'cron', day_of_week='mon-fri', hour=9, minute=30, timezone='Asia/Taipei')
     scheduler.add_job(auto_monitor_job, 'cron', day_of_week='mon-fri', hour='9-13', minute='*/5', timezone='Asia/Taipei')
+    scheduler.add_job(auto_close_job, 'cron', day_of_week='mon-fri', hour=13, minute=25, timezone='Asia/Taipei')
     
     # Run once manually on startup in the background (prevent blocking Uvicorn startup)
     import threading
