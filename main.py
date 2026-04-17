@@ -423,6 +423,18 @@ def api_virtual_portfolio():
     conn.close()
     return rows
 
+@app.get("/api/admin/clear-bot-history")
+def admin_clear_bot_history():
+    """
+    Temporary endpoint to wipe the bot's trading history and active portfolio to reset win rates.
+    """
+    conn = get_db()
+    execute_query(conn, 'DELETE FROM virtual_trade_history')
+    execute_query(conn, 'DELETE FROM virtual_portfolio')
+    conn.commit()
+    conn.close()
+    return {"status": "success", "message": "機器人所有的歷史戰績與投資組合已成功清空！"}
+
 @app.get("/api/virtual-history")
 def api_virtual_history():
     conn = get_db()
