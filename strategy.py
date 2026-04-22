@@ -37,16 +37,28 @@ def evaluate_stock(df: pd.DataFrame) -> dict:
     # 條件 3：具備基本流動性 (5日均量 > 500 張 = 500000 股)
     avg_vol_5 = float(recent_5['Volume'].mean()) 
     liquid_enough = avg_vol_5 > 500000
+
+    # 條件 4：避免追高接盤（過濾已連續兩天上漲之標的）
+    # 日線資料 df 結算至昨日(T-1)。若 T-1 與 T-2 兩天皆呈現連漲，今日(T日)買進極易遭遇獲利了結賣壓。
+    prev2_close = float(recent_20['Close'].iloc[-3])
+    t1_gain = (current_close - prev_close) / prev_close
+    t2_gain = (prev_close - prev2_close) / prev2_close
+    
+    # 定義連續爆拉：連兩天大於 2%，或連兩天皆漲且累積漲幅 > 8%
+    is_consecutive_surge = (t1_gain > 0.02 and t2_gain > 0.02) or \
+                           (t1_gain > 0 and t2_gain > 0 and (current_close - prev2_close) / prev2_close > 0.08)
+    not_overextended = not is_consecutive_surge
     
     # Checklist
     checklist = {
         "near_high": bool(near_high),
         "is_red_candle": bool(is_red_candle),
-        "closing_strong": bool(closing_strong)
+        "closing_strong": bool(closing_strong),
+        "not_overextended": bool(not_overextended)
     }
 
     # Phase 1: Candidate Pool Filter - T+0 強勢動能改版
-    is_candidate = near_high and is_red_candle and closing_strong and liquid_enough
+    is_candidate = near_high and is_red_candle and closing_strong and liquid_enough and not_overextended
     
     if not is_candidate:
         return {"candidate": False, "reason": "未滿足球員初選條件（未呈現逼近創高且強勢收盤之動能特徵）", "checklist": checklist, "current_price": current_close}

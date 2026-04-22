@@ -129,7 +129,8 @@ def fetch_realtime_twse(stock_id: str) -> dict:
                     "volume": s2f(item.get("v")) * 1000,
                     "open": s2f(item.get("o"), float(current_price)),
                     "high": s2f(item.get("h"), float(current_price)),
-                    "low": s2f(item.get("l"), float(current_price))
+                    "low": s2f(item.get("l"), float(current_price)),
+                    "y_close": s2f(item.get("y"))
                 }
     except Exception as e:
         print(f"TWSE Realtime fetch error for {stock_id}:", e)

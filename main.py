@@ -132,10 +132,10 @@ def job_scan_market():
 
 def auto_buy_job():
     """
-    Runs at 09:30 AM. Fetches top 10 recommended stocks and buys them.
+    Runs at 09:31 AM. Fetches top 10 recommended stocks and buys them.
     Each stock gets max 20,000 NTD budget.
     """
-    print(f"[{datetime.datetime.now()}] 09:30 AM Trigger: Auto-Buy Job Started", flush=True)
+    print(f"[{datetime.datetime.now()}] 09:31 AM Trigger: Auto-Buy Job Started (with Strict Filter)", flush=True)
     from scraper import fetch_realtime_twse
     conn = get_db()
     
@@ -168,11 +168,21 @@ def auto_buy_job():
             price = rt['price']
             open_p = rt['open']
             
-            # --- T+0 早盤動能濾網 ---
-            # 1. 必須是上漲趨勢 (現價 > 開盤價)，代表早盤買盤強勁有動能
-            # 2. 避免買在漲停或過高位置 (現價 <= 開盤價 * 1.07)，保留 T+0 獲利空間
-            if open_p > 0 and (price <= open_p or price > open_p * 1.07):
-                print(f"[Auto-Buy Filter] Skipped {ticker}: price {price} vs open {open_p} (Weak or too high)", flush=True)
+            # --- T+0 早盤動能濾網 (嚴格升級版) ---
+            # 1. 確保早盤趨勢向上: 現價 > 開盤價
+            # 2. 確保日級別強勢: 現價 > 昨收 * 1.01 (至少實質上漲 1%)
+            # 3. 避免買在主力出貨段: 現價 >= 今日最高點 * 0.985 (從最高點拉回幅度 <= 1.5%)
+            # 4. 避免買在漲停板: 現價 <= 開盤價 * 1.07
+            high_p = rt.get('high', 0)
+            y_close = rt.get('y_close', 0)
+            
+            is_weak = price <= open_p
+            is_too_high = price > open_p * 1.07
+            is_gap_down_trap = y_close > 0 and price <= y_close * 1.01
+            is_falling_knife = high_p > 0 and price < high_p * 0.985
+            
+            if open_p <= 0 or is_weak or is_too_high or is_gap_down_trap or is_falling_knife:
+                print(f"[Auto-Buy Filter] Skipped {ticker}: p={price}, o={open_p}, h={high_p}, y.c={y_close}", flush=True)
                 continue
             
             # Calculate shares
@@ -315,7 +325,7 @@ def startup_event():
     scheduler.add_job(intraday_survival_check, 'cron', hour=9, minute=30, timezone='Asia/Taipei')
     
     # New Auto-Trading Jobs
-    scheduler.add_job(auto_buy_job, 'cron', day_of_week='mon-fri', hour=9, minute=30, timezone='Asia/Taipei')
+    scheduler.add_job(auto_buy_job, 'cron', day_of_week='mon-fri', hour=9, minute=31, timezone='Asia/Taipei')
     scheduler.add_job(auto_monitor_job, 'cron', day_of_week='mon-fri', hour='9-13', minute='*/5', timezone='Asia/Taipei')
     scheduler.add_job(auto_close_job, 'cron', day_of_week='mon-fri', hour=13, minute=25, timezone='Asia/Taipei')
     
